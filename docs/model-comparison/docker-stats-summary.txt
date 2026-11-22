@@ -5,3 +5,4 @@ granite4.2_3b samples=152 cpu_avg=396% cpu_peak=430% ram_peak=2.56GiB
 phi4-mini samples=112 cpu_avg=393% cpu_peak=418% ram_peak=3.52GiB
 gemma4_e2b samples=164 cpu_avg=394% cpu_peak=422% ram_peak=5.24GiB
 compose-granite samples=168 cpu_avg=400% cpu_peak=441% ram_peak=2.62GiB
+vps-granite samples=122 cpu_avg=394% cpu_peak=404% ram_peak=2.91GiB (siruwu_home, Ubuntu 24.04, 4 CPU / 8 GB limit)

@@ -122,7 +122,7 @@ Why Granite 4.2 3B is the default:
 
 Alternatives by priority: **qwen3.5:4b** if category accuracy matters most (97.5 %, about 1.3 GiB more RAM and slower), **phi4-mini** if speed matters most (MIT, fastest), **gemma4:e2b** for the best severity calibration if 8 GB of RAM and 7 GB of disk are available. Switching is one line in `.env`.
 
-Caveats of this comparison: 40 samples means one sample is 2.5 points, so differences of a few points are noise. Severity is subjective, so "exact" accuracy is low for every model and "±1 level" is the more honest score. The labels were written by the author. Timings come from Docker Desktop on a Mac (the Linux VM there is slower than bare metal and the machine was not idle), so absolute numbers on a real VPS will differ, but the ranking and the RAM figures are what to rely on.
+Caveats of this comparison: 40 samples means one sample is 2.5 points, so differences of a few points are noise. Severity is subjective, so "exact" accuracy is low for every model and "±1 level" is the more honest score. The labels were written by the author. Timings come from Docker Desktop on a Mac (the Linux VM there is slower than bare metal and the machine was not idle), so absolute numbers on a real VPS will differ (the default model was re-measured on a Linux host, see [the demonstration](#demonstration-on-a-clean-linux-host): mean 8.9 s instead of 11-13 s), but the ranking and the RAM figures are what to rely on.
 
 Reproduce: `scripts/compare.sh "granite4.2:3b phi4-mini" <ollama-container>` runs the evaluation per model and records `docker stats`; `scripts/stats.sh <file>` summarises it.
 
@@ -135,7 +135,7 @@ Measured on the default model (Granite 4.2 3B, Q4), Ollama limited to 4 CPUs / 8
 | **Disk** | model 2.2 GB (volume `ollama-models`) + Ollama image 4.3 GB + classifier image 19 MB. Plan for **10 GB** including the OS layer cache and a second model for upgrades |
 | **RAM** | idle Ollama ~90 MB; with the model loaded **2.6 GiB peak** under load; classifier process ~20 MB. Plan for **4 GB** minimum, 8 GB for comfort or larger models |
 | **CPU** | inference uses all allotted cores: ~400 % of 4 cores while a request runs, idle otherwise. 2 cores work but roughly double the latency |
-| **Latency** | first request after start (model load) ~35 s; warm request **~7 s** on a quiet machine, mean 11–13 s over the 40-sample set (stack traces are slower: prompt processing grows with input length); p95 17–19 s |
+| **Latency** | first request after start (model load) 18–35 s; warm request **~7 s**, mean 9 s (Linux) to 11–13 s (Mac, Docker Desktop) over the 40-sample set (stack traces are slower: prompt processing grows with input length); p95 15–19 s |
 | **Throughput** | one request at a time, about 5–8 requests per minute. Parallel requests do not help on CPU; they wait for a slot (`QUEUE_WAIT`) and then get 429 |
 
 Series of sequential requests (the 40-sample set, one by one, against the Compose stack): 40/40 valid answers, no retries needed, memory flat at 2.6 GiB, CPU pinned at the 4-core limit. A burst of 6–8 simultaneous requests with the default single slot: one or two finish, the rest wait 30 s and are answered with `429 busy`, the process stays healthy and the metric `classifier_requests_total{outcome="busy"}` counts them (a run with two slots is visible as latency growth to ~50 s instead).
@@ -204,6 +204,23 @@ Notes:
 - **Updates.** `git pull && docker compose up -d --build`.
 - **Registry not reachable from the server.** If `registry.ollama.ai` is blocked, download the model on another machine and copy the volume: `docker run --rm --entrypoint tar -v <project>_ollama-models:/m:ro ollama/ollama:0.40.17 cf - -C /m . | ssh server 'cat > models.tar'`, then on the server create the volume and unpack the archive into it before `docker compose up -d`. This is exactly what was done for the demo below.
 
+## Demonstration on a clean Linux host
+
+There is no VPS at hand, so the deployment instructions were run literally on a separate Linux machine used as a stand-in: Ubuntu 24.04, kernel 6.8, 20 cores and 15 GB RAM (no GPU), Docker 29 with Compose v5. The Ollama container was limited to **4 CPUs and 8 GB** (the defaults of this project), so the numbers describe a 4-vCPU VPS.
+
+What was done: `git clone`, `cp .env.example .env`, `docker compose --profile observability up -d --build`, with no source or configuration changes. The registry `registry.ollama.ai` is not reachable from that host, so the model volume was copied from the laptop (see the note in the deployment section); `model-init` found the model and exited, the stack was ready in 15 seconds.
+
+| Measured on the Linux host (granite4.2:3b) | |
+|---|---|
+| First request after start (model loaded from disk) | 18 s |
+| Warm request | 6.7-6.9 s |
+| 40-sample evaluation, sequential | 40/40 valid, category accuracy **95.0 %**, severity exact 52.5 %, within one level 97.5 % |
+| Latency over the 40 samples | mean 8.9 s, p50 8.3 s, p95 15.1 s, max 16.9 s |
+| Ollama container | CPU ~394 % average (limit 400 %), RAM peak **2.9 GiB**, idle ~0 % CPU |
+| Burst of 8 parallel requests (1 slot, `QUEUE_WAIT` 30 s) | 5 answered (about 6 s apart, no degradation), 3 rejected with `429 busy` after exactly 30 s |
+
+The full report is in [`docs/model-comparison/vps-granite.md`](docs/model-comparison/vps-granite.md). These numbers are cleaner than the Mac measurements above (no virtualisation layer, no other load): the Mac figures are a pessimistic bound, and the ranking of models there is what to rely on. Differences between the two runs of the same model (92.5 % vs 95.0 % category accuracy) are the noise level of a 40-sample set.
+
 ## Monitoring
 
 `docker compose --profile observability up -d` adds Prometheus (scrapes `classifier:8080/metrics` every 15 s, 15 days retention) and Grafana with the provisioned dashboard **LLM error classifier**: success ratio, model name, requests per minute by outcome (`ok`, `invalid_output`, `backend_error`, `timeout`, `busy`, `bad_input`), latency p50/p95, in-flight calls, tokens per second, prompt/completion tokens, model calls per request (above 1 means retries), process memory. Metrics (`classifier_*`): `requests_total{outcome}`, `request_duration_seconds`, `in_flight`, `llm_attempts`, `prompt_tokens_total`, `completion_tokens_total`, `tokens_per_second`, `model_info{model}`.
@@ -212,7 +229,7 @@ Container CPU and RAM of the model itself are best read from `docker stats`, or 
 
 ![Grafana dashboard](docs/grafana-dashboard.png)
 
-The screenshot was taken after an evaluation run and two deliberate bursts of parallel requests, which is why the success ratio is low: the rejected `busy` requests count as unsuccessful.
+The screenshot is from the Linux demo host below, during the evaluation run. [An earlier screenshot](docs/grafana-dashboard-mac-burst.png) from the Mac shows the same dashboard after two deliberate bursts of parallel requests: the rejected `busy` requests pull the success ratio down.
 
 ## Evaluation
 
