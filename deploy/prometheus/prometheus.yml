@@ -2,6 +2,6 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: hawk-monitor
+  - job_name: classifier
     static_configs:
-      - targets: ["monitor:8080"]
+      - targets: ["classifier:8080"]

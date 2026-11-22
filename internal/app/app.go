@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/Code-oclock/llm-error-classifier/internal/adapter/metrics"
@@ -27,7 +28,7 @@ func Run(ctx context.Context, getenv func(string) string, log *slog.Logger) erro
 	}
 
 	log.Info("starting",
-		"listen", cfg.ListenAddr, "model", cfg.LLMModel, "backend", cfg.LLMBaseURL,
+		"listen", cfg.ListenAddr, "model", cfg.LLMModel, "backend", redact(cfg.LLMBaseURL),
 		"max_concurrent", cfg.MaxConcurrent, "max_attempts", cfg.MaxAttempts,
 		"llm_timeout", cfg.LLMTimeout, "language", cfg.Language)
 
@@ -55,7 +56,7 @@ func Run(ctx context.Context, getenv func(string) string, log *slog.Logger) erro
 		Addr:              cfg.ListenAddr,
 		Handler:           httpctl.NewHandler(classifier, llm.Ping, obs.Handler(), log),
 		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      cfg.LLMTimeout*time.Duration(cfg.MaxAttempts) + cfg.QueueWait + 10*time.Second,
+		WriteTimeout:      cfg.LLMTimeout*time.Duration(cfg.MaxAttempts) + cfg.QueueWait + 40*time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 
@@ -81,4 +82,14 @@ func Run(ctx context.Context, getenv func(string) string, log *slog.Logger) erro
 	}
 
 	return nil
+}
+
+// redact hides credentials embedded in a URL before it is logged.
+func redact(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid url>"
+	}
+
+	return u.Redacted()
 }

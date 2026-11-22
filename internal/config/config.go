@@ -77,7 +77,7 @@ func Load(getenv func(string) string) (Config, error) {
 		Language:           str("CLASSIFY_LANGUAGE", "English"),
 		MaxInputChars:      num("MAX_INPUT_CHARS", 4000),
 		MaxAttempts:        num("MAX_ATTEMPTS", 2),
-		MaxConcurrent:      num("MAX_CONCURRENT", 2),
+		MaxConcurrent:      num("MAX_CONCURRENT", 1),
 		QueueWait:          dur("QUEUE_WAIT", 30*time.Second),
 		LogLevel:           str("LOG_LEVEL", "info"),
 	}

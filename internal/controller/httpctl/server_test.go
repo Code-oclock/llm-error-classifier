@@ -85,6 +85,7 @@ func TestClassifyInputForms(t *testing.T) {
 		{"plain text", "text/plain; charset=utf-8", "panic: boom", "panic: boom", http.StatusOK},
 		{"message key", "application/json", `{"message":"boom"}`, "boom", http.StatusOK},
 		{"bad json", "application/json", `{`, "", http.StatusBadRequest},
+		{"wrong type", "application/octet-stream", `{"error":"x"}`, "", http.StatusUnsupportedMediaType},
 		{"too large", "text/plain", strings.Repeat("x", 300<<10), "", http.StatusRequestEntityTooLarge},
 	}
 

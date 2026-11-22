@@ -91,18 +91,14 @@ func (s *server) classify(w http.ResponseWriter, r *http.Request) {
 	result, err := s.classifier.Classify(r.Context(), text)
 	if err != nil {
 		status, code := mapError(err)
-		s.log.Warn("classify failed", "code", code, "chars", len(text), "duration", time.Since(start).Round(time.Millisecond), "err", err)
+		s.log.Warn("classify failed", "code", code, "chars", len(text), "duration", time.Since(start).Round(time.Millisecond))
+		s.log.Debug("classify failure detail", "err", err)
 
 		if status == http.StatusTooManyRequests {
 			w.Header().Set("Retry-After", "5")
 		}
 
-		msg := err.Error()
-		if status == http.StatusInternalServerError {
-			msg = "internal error"
-		}
-
-		writeError(w, status, code, msg)
+		writeError(w, status, code, publicMessages[code])
 
 		return
 	}
@@ -124,8 +120,13 @@ func readText(w http.ResponseWriter, r *http.Request) (text string, status int, 
 	}
 
 	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if mediaType == "text/plain" {
+
+	switch mediaType {
+	case "text/plain":
 		return string(body), 0, ""
+	case "", "application/json":
+	default:
+		return "", http.StatusUnsupportedMediaType, "use application/json or text/plain"
 	}
 
 	var in struct {
@@ -143,6 +144,16 @@ func readText(w http.ResponseWriter, r *http.Request) (text string, status int, 
 	}
 
 	return text, 0, ""
+}
+
+// publicMessages are the only texts clients see: backend details stay in logs.
+var publicMessages = map[string]string{
+	"empty_input":          "error text is empty",
+	"busy":                 "too many concurrent requests, retry later",
+	"model_timeout":        "the model did not answer in time",
+	"invalid_model_output": "the model returned an unusable answer",
+	"model_unavailable":    "the model backend is unavailable",
+	"internal":             "internal error",
 }
 
 func mapError(err error) (status int, code string) {

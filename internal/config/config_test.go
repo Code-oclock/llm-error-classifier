@@ -18,7 +18,7 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if c.ListenAddr != ":8080" || c.MaxConcurrent != 2 || c.LLMTimeout != 120*time.Second || c.LLMReasoningEffort != "none" {
+	if c.ListenAddr != ":8080" || c.MaxConcurrent != 1 || c.LLMTimeout != 120*time.Second || c.LLMReasoningEffort != "none" {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 }
