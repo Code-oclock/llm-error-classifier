@@ -28,7 +28,7 @@ services:
   model-init:
     image: ollama/ollama:0.40.17
     restart: "no"
-    entrypoint: ["sh", "-c", "ollama pull \"$$LLM_MODEL\""]
+    entrypoint: ["sh", "-c", "ollama show \"$$LLM_MODEL\" >/dev/null 2>&1 || ollama pull \"$$LLM_MODEL\""]
     environment:
       OLLAMA_HOST: http://ollama:11434
       LLM_MODEL: ${LLM_MODEL:?set LLM_MODEL in .env}

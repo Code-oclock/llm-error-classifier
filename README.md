@@ -168,7 +168,7 @@ All settings are environment variables (see [`.env.example`](.env.example)); no 
 | `*_PORT` | 8080, 11434, 9090, 3000 | host ports, all bound to 127.0.0.1 |
 | `BUILD_PROXY`, `HTTPS_PROXY` | empty | only when the host reaches the internet through a proxy |
 
-Updating or swapping the model without touching the application: edit `LLM_MODEL`, run `docker compose up -d`. `model-init` pulls the new model into the persistent volume, the classifier restarts with the new name. Old models stay in the volume until you remove them (`docker compose exec ollama ollama rm <tag>`; if the host needs a proxy, add `-e HTTPS_PROXY= -e HTTP_PROXY=` to the `exec`, otherwise the CLI tries to reach localhost through it). Any other OpenAI-compatible server (llama.cpp `llama-server`, vLLM) can replace Ollama by setting `LLM_BASE_URL`.
+Updating or swapping the model without touching the application: edit `LLM_MODEL`, run `docker compose up -d`. `model-init` pulls the new model into the persistent volume (a tag that is already present is not re-downloaded, so use a new tag to upgrade), the classifier restarts with the new name. Old models stay in the volume until you remove them (`docker compose exec ollama ollama rm <tag>`; if the host needs a proxy, add `-e HTTPS_PROXY= -e HTTP_PROXY=` to the `exec`, otherwise the CLI tries to reach localhost through it). Any other OpenAI-compatible server (llama.cpp `llama-server`, vLLM) can replace Ollama by setting `LLM_BASE_URL`.
 
 ## Deploying on a clean Linux VPS
 
@@ -196,12 +196,13 @@ sudo docker compose --profile observability up -d
 
 Notes:
 
-- **Restart after reboot.** All long-running services use `restart: unless-stopped`; with `docker` enabled in systemd the stack comes back by itself. `model-init` is a one-shot job that finds the model already in the volume and exits in a second.
+- **Restart after reboot.** All long-running services use `restart: unless-stopped`; with `docker` enabled in systemd the stack comes back by itself. `model-init` is a one-shot job that finds the model already in the volume (`ollama show`) and exits in a second, so a restart works even without internet access.
 - **Persistence.** Models live in the named volume `ollama-models`, so `docker compose down` / `up` and image rebuilds never download them again. Do not use `down -v` unless you want to.
 - **No source changes** are needed between laptop and VPS: only `.env` differs (CPU/RAM limits, ports, model).
 - **Exposure.** Ports are published on 127.0.0.1. To serve the API publicly, put nginx/Caddy with TLS and authentication in front, or change the port mapping deliberately.
 - **Sizing.** Set `OLLAMA_CPUS` to the number of vCPUs and `OLLAMA_MEMORY` to RAM minus ~1 GB. For 4 GB RAM pick `qwen3.5:2b` or `granite4.2:3b`; for 2 vCPU expect roughly twice the latency.
 - **Updates.** `git pull && docker compose up -d --build`.
+- **Registry not reachable from the server.** If `registry.ollama.ai` is blocked, download the model on another machine and copy the volume: `docker run --rm --entrypoint tar -v <project>_ollama-models:/m:ro ollama/ollama:0.40.17 cf - -C /m . | ssh server 'cat > models.tar'`, then on the server create the volume and unpack the archive into it before `docker compose up -d`. This is exactly what was done for the demo below.
 
 ## Monitoring
 
