@@ -70,7 +70,8 @@ func (s *server) readyz(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := s.ready(ctx); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "not_ready", err.Error())
+		s.log.Warn("not ready", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "not_ready", "model backend is not ready")
 
 		return
 	}

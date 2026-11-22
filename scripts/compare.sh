@@ -14,12 +14,29 @@ mkdir -p "$OUT" bin
 go build -o bin/classifier ./cmd/classifier
 go build -o bin/evaluate ./cmd/evaluate
 
+server=
+sampler=
+cleanup() {
+	[ -z "$sampler" ] || kill "$sampler" 2>/dev/null || true
+	[ -z "$server" ] || kill "$server" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
 for model in $MODELS; do
 	label=$(echo "$model" | tr '/: ' '___')
 	echo "== $model"
 	LLM_MODEL=$model LLM_BASE_URL=$BACKEND LISTEN_ADDR=:$PORT MAX_CONCURRENT=1 LOG_LEVEL=warn bin/classifier >"$OUT/$label.server.log" 2>&1 &
 	server=$!
-	until curl -sf "http://localhost:$PORT/readyz" >/dev/null; do sleep 1; done
+	ready=0
+	for _ in $(seq 1 60); do
+		curl -sf "http://localhost:$PORT/readyz" >/dev/null && ready=1 && break
+		kill -0 "$server" 2>/dev/null || break
+		sleep 1
+	done
+	if [ "$ready" -ne 1 ]; then
+		echo "$model: classifier is not ready (is the model pulled? see $OUT/$label.server.log)" >&2
+		exit 1
+	fi
 
 	(while :; do docker stats --no-stream --format '{{.CPUPerc}},{{.MemUsage}}' "$CONTAINER" >>"$OUT/$label.stats.csv"; sleep 2; done) &
 	sampler=$!
@@ -27,7 +44,9 @@ for model in $MODELS; do
 
 	bin/evaluate -url "http://localhost:$PORT" -dataset eval/dataset.jsonl -label "$label" -out "$OUT" >/dev/null
 
-	kill "$sampler" "$server" 2>/dev/null || true
+	cleanup
 	wait 2>/dev/null || true
+	server=
+	sampler=
 	echo "   report: $OUT/$label.md  docker stats: $OUT/$label.stats.csv"
 done

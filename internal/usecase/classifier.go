@@ -166,7 +166,7 @@ func (c *Classifier) Classify(ctx context.Context, text string) (entity.Classifi
 		totalPromptTokens += resp.PromptTokens
 		totalCompletionTokens += resp.CompletionTokens
 
-		classification, parseErr := parseClassification(resp.Content)
+		classification, parseErr := ParseClassification(resp.Content)
 		if parseErr == nil {
 			c.obs.Observe(Event{
 				Outcome:          OutcomeOK,
@@ -212,7 +212,6 @@ func truncate(text string, maxChars int) string {
 	return head + "\n[... truncated ...]\n" + tail
 }
 
-// classifyBackendError maps a backend failure to a metrics outcome and a domain error.
 func classifyBackendError(ctx context.Context, err error) (Outcome, error) {
 	switch {
 	case errors.Is(err, entity.ErrModelTimeout):

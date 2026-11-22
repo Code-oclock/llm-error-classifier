@@ -10,13 +10,8 @@ import (
 
 const maxFieldRunes = 500
 
-// ParseClassification parses and normalises model output into a Classification.
+// ParseClassification extracts the JSON object from model output and normalises it.
 func ParseClassification(content string) (entity.Classification, error) {
-	return parseClassification(content)
-}
-
-// parseClassification parses model output into an entity.Classification.
-func parseClassification(content string) (entity.Classification, error) {
 	jsonStr, err := findBalancedJSON(content)
 	if err != nil {
 		return entity.Classification{}, err
@@ -98,7 +93,6 @@ func findBalancedJSON(s string) (string, error) {
 	return "", fmt.Errorf("%w: no balanced JSON object found", entity.ErrInvalidModelOutput)
 }
 
-// cutRunes cuts s to limit runes.
 func cutRunes(s string, limit int) string {
 	runes := []rune(s)
 	if len(runes) > limit {

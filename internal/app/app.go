@@ -56,6 +56,7 @@ func Run(ctx context.Context, getenv func(string) string, log *slog.Logger) erro
 		Addr:              cfg.ListenAddr,
 		Handler:           httpctl.NewHandler(classifier, llm.Ping, obs.Handler(), log),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      cfg.LLMTimeout*time.Duration(cfg.MaxAttempts) + cfg.QueueWait + 40*time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}

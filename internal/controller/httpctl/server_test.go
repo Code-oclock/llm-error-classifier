@@ -170,7 +170,7 @@ func TestProbesAndMetrics(t *testing.T) {
 	}
 
 	down := newServer(t, &fakeClassifier{}, errors.New("model missing"))
-	if s, b := get(down.URL + "/readyz"); s != http.StatusServiceUnavailable || !strings.Contains(b, "model missing") {
+	if s, b := get(down.URL + "/readyz"); s != http.StatusServiceUnavailable || !strings.Contains(b, "not_ready") || strings.Contains(b, "model missing") {
 		t.Errorf("readyz down %d %s", s, b)
 	}
 }
