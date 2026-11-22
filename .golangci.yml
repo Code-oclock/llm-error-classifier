@@ -1,0 +1,69 @@
+version: "2"
+
+run:
+  timeout: 3m
+
+formatters:
+  enable:
+    - gofumpt
+    - gci
+  settings:
+    gofumpt:
+      extra:
+        group-params: true
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/Code-oclock/llm-error-classifier)
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose
+    - canonicalheader
+    - contextcheck
+    - copyloopvar
+    - depguard
+    - errname
+    - errorlint
+    - gocritic
+    - godot
+    - gosec
+    - misspell
+    - nilerr
+    - nlreturn
+    - noctx
+    - nolintlint
+    - perfsprint
+    - testpackage
+    - thelper
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - whitespace
+  settings:
+    depguard:
+      rules:
+        usecase-and-entity:
+          list-mode: lax
+          files:
+            - "**/internal/usecase/**"
+            - "**/internal/entity/**"
+          deny:
+            - pkg: github.com/Code-oclock/llm-error-classifier/internal/adapter
+              desc: use cases depend on ports, not adapters
+            - pkg: github.com/Code-oclock/llm-error-classifier/internal/controller
+              desc: use cases must not know about controllers
+            - pkg: github.com/Code-oclock/llm-error-classifier/internal/app
+              desc: use cases must not know about the composition root
+    nlreturn:
+      block-size: 3
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
