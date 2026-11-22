@@ -591,6 +591,74 @@ func TestClassifier_ContextCanceledWhileWaitingForSlot(t *testing.T) {
 	}
 }
 
+func TestClassifier_CancelWhileQueuedFreesSlot(t *testing.T) {
+	t.Parallel()
+
+	block := make(chan struct{})
+	firstStarted := make(chan struct{})
+
+	var once sync.Once
+
+	llm := &fakeLLM{
+		complete: func(ctx context.Context, req usecase.LLMRequest) (usecase.LLMResponse, error) {
+			once.Do(func() {
+				close(firstStarted)
+				<-block
+			})
+
+			return usecase.LLMResponse{
+				Content: `{"category": "runtime_error", "severity": "low", "summary": "ok", "suggested_action": "none"}`,
+			}, nil
+		},
+	}
+	obs := &fakeObserver{}
+
+	c := usecase.NewClassifier(llm, obs, usecase.Config{MaxConcurrent: 1, QueueWait: 10 * time.Second})
+
+	firstDone := make(chan struct{})
+
+	go func() {
+		defer close(firstDone)
+
+		_, _ = c.Classify(context.Background(), "first error")
+	}()
+
+	<-firstStarted
+
+	// The second request is already waiting for the only slot when its client goes away.
+	ctx, cancel := context.WithCancel(context.Background())
+	secondErr := make(chan error, 1)
+
+	go func() {
+		_, err := c.Classify(ctx, "second error")
+		secondErr <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-secondErr:
+		if !errors.Is(err, entity.ErrModelTimeout) || !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected ErrModelTimeout wrapping context.Canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued request did not return after its context was cancelled")
+	}
+
+	close(block)
+	<-firstDone
+
+	// The cancelled request must not have kept the slot: the next one goes through.
+	if _, err := c.Classify(context.Background(), "third error"); err != nil {
+		t.Fatalf("slot leaked after cancellation: %v", err)
+	}
+
+	if current := obs.InFlightCurrent(); current != 0 {
+		t.Fatalf("expected inFlight to balance to 0, got %d", current)
+	}
+}
+
 func TestClassifier_TokenSums(t *testing.T) {
 	t.Parallel()
 

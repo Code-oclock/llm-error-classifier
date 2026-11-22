@@ -14,7 +14,7 @@ const (
 	defaultLanguage      = "English"
 	defaultMaxInputChars = 4000
 	defaultMaxAttempts   = 2
-	defaultMaxConcurrent = 2
+	defaultMaxConcurrent = 1
 	defaultQueueWait     = 30 * time.Second
 )
 

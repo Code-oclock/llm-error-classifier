@@ -65,7 +65,7 @@ Errors are JSON `{"error": "<fixed message>", "code": "<code>"}`:
 | 502 | `invalid_model_output`, `model_unavailable` | the model kept returning an unusable answer, or the backend is down |
 | 504 | `model_timeout` | the model did not answer within `LLM_TIMEOUT` |
 
-Backend details never reach the client; they are logged at debug level only. The text of the error itself is not logged.
+Backend details never reach the client of `/classify`; they are logged at debug level only. `/readyz` is the exception on purpose: it says why the service is not ready (model missing, backend unreachable) for the operator. A client that disconnects mid-request is counted as `timeout` in the metrics. The text of the error itself is not logged.
 
 ## Architecture
 
@@ -102,7 +102,7 @@ How a request flows:
 
 Open-weights models of 0.8–4B parameters were compared on the same 40-sample set, on the same machine, with the Ollama container limited to **4 CPUs and 8 GB RAM** (the size of a typical entry-level VPS), one request at a time, Q4 quantisation as shipped by Ollama.
 
-| Model | License | Disk | Peak RAM | Category acc. | Severity exact | Severity ±1 | Valid JSON | Latency mean / p95 |
+| Model | License | Disk | Peak RAM | Category acc. | Severity exact | Severity ±1 | Valid answers | Latency mean / p95 |
 |---|---|---|---|---|---|---|---|---|
 | qwen3.5:0.8b | Apache 2.0 | 1.3 GB | 2.3 GiB | 82.5 % | 40.0 % | 80.0 % | 100 % | 18.0 s / 21.7 s |
 | qwen3.5:2b | Apache 2.0 | 2.7 GB | 3.4 GiB | 90.0 % | 45.0 % | 90.0 % | 97.5 % | 13.8 s / 29.2 s |
@@ -124,6 +124,12 @@ Alternatives by priority: **qwen3.5:4b** if category accuracy matters most (97.5
 
 Caveats of this comparison: 40 samples means one sample is 2.5 points, so differences of a few points are noise. Severity is subjective, so "exact" accuracy is low for every model and "±1 level" is the more honest score. The labels were written by the author. Timings come from Docker Desktop on a Mac (the Linux VM there is slower than bare metal and the machine was not idle), so absolute numbers on a real VPS will differ (the default model was re-measured on a Linux host, see [the demonstration](#demonstration-on-a-clean-linux-host): mean 8.9 s instead of 11-13 s), but the ranking and the RAM figures are what to rely on.
 
+Read the severity numbers with care:
+
+- **"±1 level" has a strong trivial baseline.** The set has 15 `medium`, 15 `high`, 6 `low` and 4 `critical`, so answering `medium` to everything scores 90 % within one level (and 37.5 % exact). Granite's 97.5 % is better than that, but only by three samples; the exact score (57.5 %) is the more telling one.
+- **Critical incidents are under-rated.** On the 4 `critical` samples Granite answered `high` three times and `medium` once (a pool-exhaustion case it also put in the wrong category), so its critical recall is 0/4 in both the Mac and the Linux run. The severity field is a triage hint, not a pager trigger; do not wake anybody on `critical` alone. `gemma4:e2b` calibrates severity best if that matters more than memory.
+- **"Valid answers" and latency count valid answers only.** It is the share of requests that ended with a valid API answer after up to `MAX_ATTEMPTS` tries, not the raw JSON quality of the model. The latency columns skip failed requests: `qwen3.5:2b` had one `model_timeout` after 120 s on the 40-sample run, which is in its report but not in its 13.8 s mean.
+
 Reproduce: `scripts/compare.sh "granite4.2:3b phi4-mini" <ollama-container>` runs the evaluation per model and records `docker stats`; `scripts/stats.sh <file>` summarises it.
 
 ## Resources
@@ -138,7 +144,7 @@ Measured on the default model (Granite 4.2 3B, Q4), Ollama limited to 4 CPUs / 8
 | **Latency** | first request after start (model load) 18–35 s; warm request **~7 s**, mean 9 s (Linux) to 11–13 s (Mac, Docker Desktop) over the 40-sample set (stack traces are slower: prompt processing grows with input length); p95 15–19 s |
 | **Throughput** | one request at a time, about 5–8 requests per minute. Parallel requests do not help on CPU; they wait for a slot (`QUEUE_WAIT`) and then get 429 |
 
-Series of sequential requests (the 40-sample set, one by one, against the Compose stack): 40/40 valid answers, no retries needed, memory flat at 2.6 GiB, CPU pinned at the 4-core limit. A burst of 6–8 simultaneous requests with the default single slot: one or two finish, the rest wait 30 s and are answered with `429 busy`, the process stays healthy and the metric `classifier_requests_total{outcome="busy"}` counts them (a run with two slots is visible as latency growth to ~50 s instead).
+Series of sequential requests (the 40-sample set, one by one, against the Compose stack): 40/40 valid answers, memory flat at 2.6 GiB, CPU pinned at the 4-core limit. A burst of 6–8 simultaneous requests with the default single slot: one or two finish, the rest wait 30 s and are answered with `429 busy`, the process stays healthy and the metric `classifier_requests_total{outcome="busy"}` counts them (a run with two slots is visible as latency growth to ~50 s instead).
 
 ### Limitations
 
@@ -161,20 +167,23 @@ All settings are environment variables (see [`.env.example`](.env.example)); no 
 | `LLM_REASONING_EFFORT` | `none` | passed through; stops reasoning models from thinking |
 | `LLM_MAX_TOKENS`, `LLM_TIMEOUT` | `400`, `120s` | per model call |
 | `MAX_CONCURRENT`, `QUEUE_WAIT` | `1`, `30s` | slots in front of the model and how long to wait for one |
-| `MAX_ATTEMPTS`, `MAX_INPUT_CHARS` | `2`, `4000` | retries on invalid output; input cut length |
+| `MAX_ATTEMPTS`, `MAX_INPUT_CHARS` | `2`, `4000` | total model calls per request on invalid output (2 = one retry); input cut length |
 | `CLASSIFY_LANGUAGE` | `English` | language of `summary` and `suggested_action` |
 | `OLLAMA_CPUS`, `OLLAMA_MEMORY` | `4`, `8g` | container limits |
 | `OLLAMA_NUM_PARALLEL` | `1` | parallel requests inside Ollama; keep equal to `MAX_CONCURRENT` |
 | `*_PORT` | 8080, 11434, 9090, 3000 | host ports, all bound to 127.0.0.1 |
 | `BUILD_PROXY`, `HTTPS_PROXY` | empty | only when the host reaches the internet through a proxy |
 
-Updating or swapping the model without touching the application: edit `LLM_MODEL`, run `docker compose up -d`. `model-init` pulls the new model into the persistent volume (a tag that is already present is not re-downloaded, so use a new tag to upgrade), the classifier restarts with the new name. Old models stay in the volume until you remove them (`docker compose exec ollama ollama rm <tag>`; if the host needs a proxy, add `-e HTTPS_PROXY= -e HTTP_PROXY=` to the `exec`, otherwise the CLI tries to reach localhost through it). Any other OpenAI-compatible server (llama.cpp `llama-server`, vLLM) can replace Ollama by setting `LLM_BASE_URL`.
+Updating or swapping the model without touching the application: edit `LLM_MODEL`, run `docker compose up -d`. `model-init` pulls the new model into the persistent volume (a tag that is already present is not re-downloaded, so use a new tag to upgrade), the classifier restarts with the new name. Old models stay in the volume until you remove them (`docker compose exec ollama ollama rm <tag>`; if the host needs a proxy, add `-e HTTPS_PROXY= -e HTTP_PROXY=` to the `exec`, otherwise the CLI tries to reach localhost through it). Any other OpenAI-compatible server (llama.cpp `llama-server`, vLLM) can replace Ollama: the Go binary only needs `LLM_BASE_URL` (run it directly, or change the URL and drop the `ollama` dependency in `docker-compose.yml`, where it is set to the bundled container).
 
 ## Deploying on a clean Linux VPS
 
 Tested layout: Ubuntu 22.04/24.04 or Debian 12, 4 vCPU, 8 GB RAM (4 GB works with smaller models), 20 GB disk, **no GPU**.
 
 ```bash
+# 0. Minimal images may lack curl and git
+sudo apt-get update && sudo apt-get install -y curl git
+
 # 1. Docker Engine and the Compose plugin (official convenience script)
 curl -fsSL https://get.docker.com | sudo sh
 sudo systemctl enable --now docker        # Docker, and with it the stack, starts on boot
@@ -183,7 +192,7 @@ sudo systemctl enable --now docker        # Docker, and with it the stack, start
 git clone https://github.com/Code-oclock/llm-error-classifier.git
 cd llm-error-classifier
 cp .env.example .env
-$EDITOR .env                              # set OLLAMA_CPUS / OLLAMA_MEMORY to what the VPS has
+${EDITOR:-nano} .env                      # set OLLAMA_CPUS / OLLAMA_MEMORY to what the VPS has
 
 # 3. Start (downloads the model once into the ollama-models volume)
 sudo docker compose up -d --build
@@ -200,7 +209,7 @@ Notes:
 - **Persistence.** Models live in the named volume `ollama-models`, so `docker compose down` / `up` and image rebuilds never download them again. Do not use `down -v` unless you want to.
 - **No source changes** are needed between laptop and VPS: only `.env` differs (CPU/RAM limits, ports, model).
 - **Exposure.** Ports are published on 127.0.0.1. To serve the API publicly, put nginx/Caddy with TLS and authentication in front, or change the port mapping deliberately.
-- **Sizing.** Set `OLLAMA_CPUS` to the number of vCPUs and `OLLAMA_MEMORY` to RAM minus ~1 GB. For 4 GB RAM pick `qwen3.5:2b` or `granite4.2:3b`; for 2 vCPU expect roughly twice the latency.
+- **Sizing.** Set `OLLAMA_CPUS` to the number of vCPUs and `OLLAMA_MEMORY` to RAM minus ~1 GB. For 4 GB RAM pick `granite4.2:3b` (measured peak 2.9 GiB on Linux; `qwen3.5:2b` peaked at 3.4 GiB and does not fit with Ollama's own overhead); for 2 vCPU expect roughly twice the latency.
 - **Updates.** `git pull && docker compose up -d --build`.
 - **Registry not reachable from the server.** If `registry.ollama.ai` is blocked, download the model on another machine and copy the volume: `docker run --rm --entrypoint tar -v <project>_ollama-models:/m:ro ollama/ollama:0.40.17 cf - -C /m . | ssh server 'cat > models.tar'`, then on the server create the volume and unpack the archive into it before `docker compose up -d`. This is exactly what was done for the demo below.
 
@@ -249,4 +258,4 @@ make check      # gofumpt/gci formatting, golangci-lint (depguard, gosec, ...), 
 make hooks      # run format and lint before each commit
 ```
 
-CI (GitHub Actions) runs the linter and the tests on every push. The unit tests use fake backends (`httptest`); no model is needed.
+CI (GitHub Actions) runs the linter and the tests on every push to `main` and on every pull request. The unit tests use fake backends (`httptest`); no model is needed.
