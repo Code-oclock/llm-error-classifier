@@ -597,7 +597,10 @@ func TestClassifier_CancelWhileQueuedFreesSlot(t *testing.T) {
 	block := make(chan struct{})
 	firstStarted := make(chan struct{})
 
-	var once sync.Once
+	var once, unblock sync.Once
+
+	release := func() { unblock.Do(func() { close(block) }) }
+	t.Cleanup(release) // an early Fatal must not leave the first call blocked
 
 	llm := &fakeLLM{
 		complete: func(ctx context.Context, req usecase.LLMRequest) (usecase.LLMResponse, error) {
@@ -646,7 +649,7 @@ func TestClassifier_CancelWhileQueuedFreesSlot(t *testing.T) {
 		t.Fatal("queued request did not return after its context was cancelled")
 	}
 
-	close(block)
+	release()
 	<-firstDone
 
 	// The cancelled request must not have kept the slot: the next one goes through.

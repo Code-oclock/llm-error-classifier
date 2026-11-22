@@ -127,10 +127,10 @@ Caveats of this comparison: 40 samples means one sample is 2.5 points, so differ
 Read the severity numbers with care:
 
 - **"±1 level" has a strong trivial baseline.** The set has 15 `medium`, 15 `high`, 6 `low` and 4 `critical`, so answering `medium` to everything scores 90 % within one level (and 37.5 % exact). Granite's 97.5 % is better than that, but only by three samples; the exact score (57.5 %) is the more telling one.
-- **Critical incidents are under-rated.** On the 4 `critical` samples Granite answered `high` three times and `medium` once (a pool-exhaustion case it also put in the wrong category), so its critical recall is 0/4 in both the Mac and the Linux run. The severity field is a triage hint, not a pager trigger; do not wake anybody on `critical` alone. `gemma4:e2b` calibrates severity best if that matters more than memory.
-- **"Valid answers" and latency count valid answers only.** It is the share of requests that ended with a valid API answer after up to `MAX_ATTEMPTS` tries, not the raw JSON quality of the model. The latency columns skip failed requests: `qwen3.5:2b` had one `model_timeout` after 120 s on the 40-sample run, which is in its report but not in its 13.8 s mean.
+- **Critical incidents are under-rated.** On the 4 `critical` samples Granite answered `high` three times and `medium` once (a pool-exhaustion case it also put in the wrong category), so its critical recall is 0/4 in both the Mac and the Linux run. The severity field is a triage hint, not a pager trigger; do not wake anybody on `critical` alone. `gemma4:e2b` had the best exact severity score on this set (65 %), at the price of 5.2 GiB of RAM.
+- **"Valid answers" and latency are not the raw model quality.** "Valid answers" is the share of all 40 requests that ended with a valid API answer after up to `MAX_ATTEMPTS` tries. The latency columns average only those successful requests: `qwen3.5:2b` had one `model_timeout` (the 120 s limit, visible in `eval/results/qwen3.5_2b.server.log`; the report lists it as a failure without its duration), so its 13.8 s mean leaves it out.
 
-Reproduce: `scripts/compare.sh "granite4.2:3b phi4-mini" <ollama-container>` runs the evaluation per model and records `docker stats`; `scripts/stats.sh <file>` summarises it.
+Reproduce: pull every model first (`docker compose exec ollama ollama pull phi4-mini`; the script does not pull and would wait forever for a missing one) and have Go installed, then `scripts/compare.sh "granite4.2:3b phi4-mini" <ollama-container>` runs the evaluation per model and records `docker stats`; `scripts/stats.sh <file>` summarises it.
 
 ## Resources
 
@@ -209,7 +209,7 @@ Notes:
 - **Persistence.** Models live in the named volume `ollama-models`, so `docker compose down` / `up` and image rebuilds never download them again. Do not use `down -v` unless you want to.
 - **No source changes** are needed between laptop and VPS: only `.env` differs (CPU/RAM limits, ports, model).
 - **Exposure.** Ports are published on 127.0.0.1. To serve the API publicly, put nginx/Caddy with TLS and authentication in front, or change the port mapping deliberately.
-- **Sizing.** Set `OLLAMA_CPUS` to the number of vCPUs and `OLLAMA_MEMORY` to RAM minus ~1 GB. For 4 GB RAM pick `granite4.2:3b` (measured peak 2.9 GiB on Linux; `qwen3.5:2b` peaked at 3.4 GiB and does not fit with Ollama's own overhead); for 2 vCPU expect roughly twice the latency.
+- **Sizing.** Set `OLLAMA_CPUS` to the number of vCPUs and `OLLAMA_MEMORY` to RAM minus ~1 GB. For 4 GB RAM pick `granite4.2:3b` (measured peak 2.9 GiB on Linux; `qwen3.5:2b` peaked at 3.4 GiB, above that 3 GB limit, which leaves too little for the OS); for 2 vCPU expect roughly twice the latency.
 - **Updates.** `git pull && docker compose up -d --build`.
 - **Registry not reachable from the server.** If `registry.ollama.ai` is blocked, download the model on another machine and copy the volume: `docker run --rm --entrypoint tar -v <project>_ollama-models:/m:ro ollama/ollama:0.40.17 cf - -C /m . | ssh server 'cat > models.tar'`, then on the server create the volume and unpack the archive into it before `docker compose up -d`. This is exactly what was done for the demo below.
 
@@ -232,7 +232,7 @@ The full report is in [`docs/model-comparison/vps-granite.md`](docs/model-compar
 
 ## Monitoring
 
-`docker compose --profile observability up -d` adds Prometheus (scrapes `classifier:8080/metrics` every 15 s, 15 days retention) and Grafana with the provisioned dashboard **LLM error classifier**: success ratio, model name, requests per minute by outcome (`ok`, `invalid_output`, `backend_error`, `timeout`, `busy`, `bad_input`), latency p50/p95, in-flight calls, tokens per second, prompt/completion tokens, model calls per request (above 1 means retries), process memory. Metrics (`classifier_*`): `requests_total{outcome}`, `request_duration_seconds`, `in_flight`, `llm_attempts`, `prompt_tokens_total`, `completion_tokens_total`, `tokens_per_second`, `model_info{model}`.
+`docker compose --profile observability up -d` adds Prometheus (scrapes `classifier:8080/metrics` every 15 s, 15 days retention) and Grafana with the provisioned dashboard **LLM error classifier**: success ratio, model name, requests per minute by outcome (`ok`, `invalid_output`, `backend_error`, `timeout`, `busy`, `bad_input`), latency p50/p95, in-flight calls, tokens per second, prompt/completion tokens, model calls per request (above 1 means retries), process memory. The counters cover calls that reach the classifier, not every HTTP request: a malformed body (400/413/415) is rejected earlier and is not counted, and `bad_input` is only an empty text. `tokens_per_second` is tokens per request time including the queue wait, not the pure generation speed. Metrics (`classifier_*`): `requests_total{outcome}`, `request_duration_seconds`, `in_flight`, `llm_attempts`, `prompt_tokens_total`, `completion_tokens_total`, `tokens_per_second`, `model_info{model}`.
 
 Container CPU and RAM of the model itself are best read from `docker stats`, or from cAdvisor if you run it; the dashboard shows only the classifier's own process.
 
